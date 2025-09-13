@@ -1,53 +1,46 @@
-import logging
-from telegram import Bot
-from telegram.ext import Updater, CommandHandler
-import PyPDF2
-from googletrans import Translator
 import os
+import json
+import fitz  # PyMuPDF برای خوندن PDF
+import requests
+from googletrans import Translator
 
-# فعال کردن لاگ برای بررسی خطاها
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
+# تنظیمات تلگرام
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-logger = logging.getLogger(__name__)
+# بارگذاری شماره صفحه
+with open("progress.json", "r") as f:
+    progress = json.load(f)
+page_num = progress["page"]
 
-# دستور start
-def start(update, context):
-    update.message.reply_text("سلام! ربات روزانه شروع به کار کرد ✅")
+# باز کردن PDF
+pdf = fitz.open("book.pdf")
+if page_num >= len(pdf):
+    message = "📕 همه صفحات فرستاده شد!"
+else:
+    text = pdf[page_num].get_text()
 
-# دستور روزانه
-def daily(update, context):
-    try:
-        # فایل PDF باید توی ریپو آپلود شده باشه (مثلاً با اسم book.pdf)
-        with open("book.pdf", "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            page = reader.pages[0]  # صفحه اول، میشه بعداً تغییر داد
-            text = page.extract_text()
+    # ترجمه متن
+    translator = Translator()
+    translated = translator.translate(text, src="ar", dest="fa").text
 
-        # ترجمه متن به فارسی
-        translator = Translator()
-        translated = translator.translate(text, src="ar", dest="fa").text
+    # ساخت پیام
+    message = f"📄 صفحه {page_num+1}\n\nمتن اصلی:\n{text}\n\nترجمه فارسی:\n{translated}"
 
-        # ارسال متن اصلی + ترجمه
-        update.message.reply_text("📖 متن اصلی (عربی):\n\n" + text[:1000])  # محدودیت تلگرام
-        update.message.reply_text("🇮🇷 ترجمه فارسی:\n\n" + translated[:1000])
+    # ارسال به تلگرام
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    requests.post(url, data={"chat_id": CHAT_ID, "text": message})
 
-    except Exception as e:
-        update.message.reply_text("خطا رخ داد ⚠️")
-        logger.error(e)
+    # آپدیت شماره صفحه
+    progress["page"] = page_num + 1
+    with open("progress.json", "w") as f:
+        json.dump(progress, f)
 
-def main():
-    # گرفتن توکن از محیط (که توی Secrets ذخیره کردی)
-    TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    bot = Bot(TOKEN)
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+pdf.close()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("daily", daily))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
+# آپدیت فایل در ریپو
+os.system('git config user.name "github-actions"')
+os.system('git config user.email "github-actions@github.com"')
+os.system('git add progress.json')
+os.system('git commit -m "Update progress"')
+os.system('git push')
